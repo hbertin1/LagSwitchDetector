@@ -1,0 +1,45 @@
+# =========================
+# Jupyter Notebook
+# =========================
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# autosaves
+*.ipynb_checkpoints
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# =========================
+# IDEs
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs / caches
+# =========================
+*.log
+
+# =========================
+# Notebook output noise (optional)
+# =========================
+# Uncomment if you want cleaner diffs
+# *.nbconvert.ipynb
