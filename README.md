@@ -1,88 +1,147 @@
-# LagSwitchDetector
+# LagSwitch Detector
 
-A data-processing and detection notebook pipeline for identifying lag-switch cheating in Unreal Engine server captures and logs.
+Code accompanying our conference submission *Towards Server-Side Detection of LagSwitch Attacks through Network Traffic Analysis*. This
+repository processes Unreal Engine server logs and PCAP captures to detect
+**lag-switch cheating** in real game sessions, and reproduces the paper's
+detection and evaluation results.
 
-## What this repo contains
-- `LagSwitchDetector.ipynb` — main analysis notebook: parsing server trace logs, extracting players/phases/cheats, processing PCAPs (via tshark), computing IAT features with exponential decay, running adaptive/fixed detectors, and producing evaluation and plots.
-- `cache/` — cache folder used for GeoIP lookups (`ip_cache.json`).
 
-## Key features
-- Parse RingBuffer server traces (requires the `proto_parser` utility).
-- Extract players, phases and cheat intervals from server logs.
-- Process PCAP captures with `tshark` to extract packets, headers and payloads.
-- Compute raw and adaptive IAT features with decay smoothing (half-life parameter).
-- Multiple detectors and baseline implementations (adaptive, fixed gap, gap+burst, random baseline).
-- Evaluation tools: packet-level, windowed, gap-event, per-flow and per-player metrics and visualizations.
+## Overview
 
-## Prerequisites
-- Python 3.9+ (recommended in a virtualenv)
-- System: `tshark` (Wireshark CLI) installed and on PATH for PCAP parsing
-- Python packages: pandas, numpy, matplotlib, protobuf, requests
+Lag-switching is a form of cheating where a player deliberately throttles
+their own network connection to gain an advantage, then releases it in a
+short burst. The core signal is the packet inter-arrival time (IAT) on each
+player's flow: a lag switch produces an abnormally large gap followed by a
+burst of packets arriving faster than usual, as the client "catches up."
 
-You can install Python packages (example):
+The pipeline in `LagSwitchDetector.ipynb`:
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1   # PowerShell on Windows
-pip install --upgrade pip
-pip install pandas numpy matplotlib protobuf requests
+1. **Parses** Unreal Engine server trace logs (`trace_server_*.bin`) and the
+   corresponding network captures (`capture_server_*.pcap`) for each game
+   session.
+2. **Labels** every packet with its game phase (warmup / playing / postgame),
+   the player it belongs to, and whether it falls inside a known cheat
+   interval (ground truth, from the server logs).
+3. **Detects** suspicious IAT bursts using an *adaptive* detector: for each
+   flow, a gap/burst threshold is derived from that flow's own decayed
+   (exponentially-weighted) mean and standard deviation of IATs, rather than
+   a single fixed threshold across all players and network conditions.
+4. **Evaluates** the detector against three baselines (a fixed
+   IAT threshold, a fixed gap+burst threshold, and a random baseline).
+5. **Aggregates** per-event detector output into a per-player
+   verdict.
+
+## Repository structure
+
+```
+.
+├── LagSwitchDetector.ipynb      # Main notebook: parsing, detection, evaluation
+├── libs/
+│   └── ParserProtobufLogs/
+|       ├── parser_utils.py      # RingBufferParser: reads the protobuf server trace logs
+│       └── ...      
+├── data/                        # Input sessions (see "Data layout" below) — not included
+│   └── <session>/Server/
+│       ├── trace_server_YYYY.MM.DD-HH.MM.SS[_anonymized].bin
+│       └── capture_server_YYYY.MM.DD-HH.MM.SS[_anonymized].pcap
+└── cache/
+    └── ip_cache_anonymized.json # Cached GeoIP/ISP lookups (anonymized for this release)
 ```
 
-## Configuration
-Open `LagSwitchDetector.ipynb` and update the configuration section near the top:
-- `PROTO_PARSER_PATH` — path to the local `proto_parser` package / Unreal proto parser utility.
-- `PATH_LOGS` — path to your Sessions folder containing `Server` subfolders.
-- `CACHE_FILE` — path to store GeoIP cache (defaults to `cache/ip_cache.json`).
-- `SERVER_IP` — server IP used to decide packet direction (default present in notebook).
+`data/` is included in an anonimyzed form in this release to not break double-blind review. 
+A cache of anonimized GeoIP/ISP lookups (`cache/ip_cache_anonymized.json`) in order to maintain the per-region/per-ISP evaluation, without actually leaking player's locations. This enables to reproduce cells behaviour without without re-querying a
+GeoIP service or exposing real player IPs.
 
-Make sure `CACHE_FILE` parent folder exists (not required if you run the notebook as the notebook code makes it).
+## Requirements
 
-## Quickstart (recommended order)
-1. Open the notebook `LagSwitchDetector.ipynb` in Jupyter / VS Code and run cells sequentially.
-2. Update configuration values at the top of the notebook.
-3. If you need to parse PCAPs, ensure `tshark` is installed and accessible.
+**Python** ≥ 3.10, with:
 
-Example high-level calls inside the notebook:
-- Build labeled PCAP dict for a single server folder:
-
-```python
-pcap_dict = get_pcap_dict_labelled(r"C:\path\to\ServerFolder", half_life=10, inlab=False)
+```
+numpy
+pandas
+matplotlib
+protobuf
+requests
 ```
 
-- Collect all sessions recursively and compute IATs:
+(installable via the commented-out `%pip install` line in the notebook's
+first cell.)
 
-```python
-merged = gather_all_pcaps_with_iats(r"C:\path\to\SessionsFolder", half_life=10)
+**System dependency:** [`tshark`](https://www.wireshark.org/docs/man-pages/tshark.html)
+(part of Wireshark) must be installed and available on `PATH`. It's used to
+extract UDP payloads from the `.pcap` captures.
+
+## Setup
+
+1. Clone the repository and install the Python dependencies above.
+2. Install `tshark` and make sure it's on `PATH` (`tshark --version` should
+   work in a terminal).
+3. (in case you want to analyze your own data) Place session recordings under `data/` following the layout below.
+4. (in case you want to analyze your own data) Open `LagSwitchDetector.ipynb` and update the configuration cell near the
+   top if your paths differ:
+
+   ```python
+   PROTO_PARSER_PATH = Path("libs")
+   PATH_LOGS = Path("data/")
+   CACHE_FILE = Path("cache/ip_cache_anonymized.json")
+   SERVER_IP = "137.74.44.5"   # server-side IP used to disambiguate flow direction
+   ```
+
+5. Run the notebook top to bottom.
+
+## Data layout
+
+Each recorded game session is expected as a subfolder of `PATH_LOGS`
+containing a `Server/` directory with a matched pair of files:
+
+- `trace_server_<YYYY.MM.DD-HH.MM.SS>.bin` — the Unreal Engine server's
+  protobuf ring-buffer trace log (player joins, phase transitions, cheat
+  start/stop events).
+- `capture_server_<YYYY.MM.DD-HH.MM.SS>.pcap` — the matching raw network
+  capture on the server, filtered to the game's UDP ports.
+
+The notebook walks `PATH_LOGS` recursively looking for any `Server/`
+subfolder, so sessions can be nested arbitrarily deep (e.g. grouped by date
+or by region).
+
+## Notebook structure
+
+The notebook is organized to mirror the pipeline above:
+
+- **Setup** — dependency install, imports, configuration.
+- **Helper Functions** — generic pandas utilities for flattening
+  protobuf-style payload columns and converting protobuf timestamps.
+- **1. Parse Server Logs** — log/PCAP parsing, player/phase/cheat
+  extraction, IAT computation, adaptive (decayed) IAT statistics, and
+  packet labeling (phase, ground-truth cheat, GeoIP/ISP).
+- **2. Detection** — the adaptive detector, packet/window/gap-event-level
+  evaluation, the half-life sensitivity sweep, per-player LLR-based
+  inference, and three baseline detectors (fixed threshold, fixed
+  gap+burst, random).
+- **Baselines** / **Evaluate per player** — the driver cells that actually
+  run the above on `pcap_inthewild` and produce the paper's result tables.
+
+Re-run the notebook from top to bottom before generating figures/tables for
+submission — cell outputs are cleared in this release so they always reflect
+the current code.
+
+## Anonymization
+
+This release is anonymized for double-blind review:
+
+- `cache/ip_cache_anonymized.json` contains GeoIP/ISP lookups with real
+  player IPs stripped or replaced.
+- Trace/PCAP filenames and internal identifiers may carry an
+  `_anonymized` suffix; the parsing regexes in the notebook accept both the
+  plain and `_anonymized` filename forms.
+
+<!-- 
+## Citation
+
 ```
+[BibTeX entry ]
+``` -->
 
-- Run adaptive detector (sweep half-life, choose best per-ISP, evaluate):
+## License
 
-```python
-half_life_values = np.logspace(np.log10(1), np.log10(40), num=10)
-sweep_df, details = compare_half_life_impact_detection_gap_events_per_isp(merged, half_life_values)
-best_per_isp = find_best_half_life_per_isp(sweep_df)
-adaptive = run_adaptive_half_life_detector(merged, best_per_isp, default_half_life=20)
-```
-
-- Evaluate baselines and compare:
-
-```python
-gap_out = extract_suspicious_window_fixed_threshold(merged, gap_threshold_ms=400)
-gap_results = evaluate_detector_gap_events(gap_out, detector_col='detector_suspicious_fixed')
-```
-
-## Notes and tips
-- The notebook contains numerous helper functions — run top-level cells (imports/config) first.
-- PCAP parsing can be slow and memory intensive; consider processing subsets or enabling multiprocessing carefully.
-- GeoIP lookups are rate-limited; the notebook caches results in `CACHE_FILE`.
-- There are duplicate helper function definitions in older versions of the notebook; ensure you run the notebook from top to bottom after making edits to avoid stale definitions in the kernel.
-
-## Troubleshooting
-- FileNotFoundError for `PROTO_PARSER_PATH`: set `PROTO_PARSER_PATH` to the correct local path where the `proto_parser` module lives.
-- `tshark` errors: verify `tshark -v` works in your shell and that the PCAP files are readable.
-- Rate limits on GeoIP API: increase the sleep between requests, or populate `cache/ip_cache.json` manually for known IPs.
-
-## License & contact
-This repository contains research code. No license file is included — if you plan to share publicly, add a `LICENSE` file.
-
-
+[Add a license — e.g. MIT, Apache-2.0 — before making the repository public.]
