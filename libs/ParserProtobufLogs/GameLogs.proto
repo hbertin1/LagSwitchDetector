@@ -1,0 +1,273 @@
+syntax = "proto3";
+// import "google/protobuf/any.proto";
+
+import "google/protobuf/timestamp.proto";
+
+package lyragame;
+
+message RingBufferLog {
+    int32 capacity = 1;
+    int32 head = 2;
+    int32 tail = 3;
+    repeated LogEntry entries = 4;
+}
+
+message LogEntry {
+    oneof entry {
+        Packet packet = 1;
+        GameEvent event = 2;
+        NetworkStat network_stat = 3;
+    }
+}
+
+message Address {
+  uint32 address_id = 1;
+  string ip = 2;
+}
+
+message Player {
+  uint32 player_id = 1;
+  string name = 2;
+  string ip_port = 3;
+  bool update_ip_port = 4; // True: already existing player, but ip:port combination updated
+}
+
+message GameEvent {
+    // see if we move the Any to oneof with exhaustively listing the types
+    // Any is slighty larger to store 
+    // google.protobuf.Any payload = 1;
+
+    oneof payload {
+        Movement movement = 1;
+        WeaponFired weapon = 2;
+        HealthUpdate health = 3;
+        CheatEvent cheat = 4;
+        Player new_player = 5;
+        Address new_address = 6;
+        Phase phase_event = 7;
+    }
+
+    google.protobuf.Timestamp ts = 8;  // timestamp
+    int32 ind = 9;     // index in buffer
+    int32 frame = 10;   // frame counter
+} 
+
+message Phase {
+    string phase_name = 1;       // Name of the phase
+    optional bool start = 2;    // Starting or ending phase
+}
+
+
+message MouseUpdate {
+    float delta_x = 1;  // Pitch
+    float delta_y = 2;  // Yaw (in UE -Yaw)
+}
+
+message Movement {
+  int32 player_id = 1;
+  float dS = 2;
+
+  // Position vectors
+  // repeated float old = 3;  // OldLocation (X, Y, Z)
+  repeated float location = 4; // NewLocation (X, Y, Z) — can't use "new" (reserved word)
+  repeated float rotation = 5; // (Pitch, Yaw, Roll)
+
+  optional MouseUpdate mouse_update = 6;
+}
+
+
+message WeaponFired {
+    int32 player_id = 1;    // player id
+    bool ot = 2;            // on target
+    google.protobuf.Timestamp time = 3;     // time since event or since start
+    float dist = 4;         // distance to target
+    int32 target_id = 5;    // actor hit name
+    string bone = 6;        // bone hit
+    bool is_blind = 7;         // blind shot?
+    string weapon = 8;      // weapon name
+    repeated int32 visible_players = 9; 
+}
+
+message HealthUpdate {
+    int32 player_id = 1;
+    int32 old = 2;          // old health value
+    int32 new_ = 3;         // updated health value
+}
+
+message CheatEvent {
+    int32 cheater_id = 1;
+    optional int32 target_id = 2;
+    string type = 3;
+    bool start = 4;
+    optional float dur = 5;
+    optional int32 out = 6;          // outgoing loss    
+    optional int32 in_ = 7;           // incoming loss, don' use in for analysis in python (as in is a keyword in python)
+}
+
+message StringLog {
+    string log = 1;
+}
+
+message RingBufferPackets {
+    int32 capacity = 1;
+    int32 head = 2;
+    int32 tail = 3;
+    repeated Packet packets = 4;
+}
+
+message NetworkStat {
+    google.protobuf.Timestamp ts = 1;  // timestamp
+    int32 ind = 2;     // index in buffer
+    int32 frame = 3;   // frame counter
+
+    float ping = 4;            // ping value
+    float engine_udp_ping = 5; // engine udp ping value
+    float sys_icmp_ping = 6;   // system icmp ping value
+}
+
+message Packet {
+    google.protobuf.Timestamp ts = 1;              // timestamp packet reception
+    int32 ind = 2;              // index in buffer
+    int32 frame = 3;            // frame counter
+    bool outgoing = 8;         // outgoing packet
+    optional bool incoming = 9;         // incoming packet
+
+
+    bytes hash_data = 4;    // hash of the packet data
+
+    optional Header header = 5;
+    optional Notification notification = 6;
+    repeated Bunch bunches = 7;
+
+    optional ConnectionError connection_error = 10;
+}
+
+message Header {
+    optional HeaderIDs ids = 1;
+    optional HeaderHandshake handshake = 2;
+}
+
+message HeaderIDs {
+    uint32 sessionid = 1;
+    uint32 clientid = 2;
+    int32 ipaddress = 3;    // if incoming, the IP address of the sender, else the IP address of the receiver
+    // bytes hash_data = 4;    // hash of the packet data
+    // string stringaddress = 5;
+}
+
+message HeaderHandshake {
+    int32 packet_type = 1;             // Handshake Packet Type
+    int32 sent_packet_count = 2;         // sent packet count
+    bool restart = 3;                   // restart handshake
+    int64 secretid = 4;
+    google.protobuf.Timestamp ts = 5;                // timestamp exchanged in the packet
+    string cookie = 6;                  // cookie exchanged for the challenge
+}
+
+message Notification {
+    // Notification Header information
+    string type = 1;
+    int32 seq = 2;             // Sequence Number
+    int32 acked_seq = 3;        // AckedSeq Number
+    string address = 4;     // ip address
+
+    // below extra optional fields
+    optional ExtraInfoNotificationHeader extra_info_header = 5;
+    optional ServerFrameTime server_frame_time = 6;
+}
+
+message ExtraInfoNotificationHeader {
+    string type = 1;
+    int32 jitter_clock = 2;
+} 
+
+message ServerFrameTime {
+    string type = 1;
+    int32 srvft = 2;        // Server frame time
+}
+
+message Bunch {
+    oneof payload {
+        BunchActorChannel bunch_actor_channel = 1;
+        ControlChannel control_channel = 2;
+        MovementSrvRcvd movement_srv_rcvd = 3;
+        MovementInvTimestamp movement_inv_timestamp = 4;
+        RPCFunctionName rpc_function_name = 5;
+        ReceivedProperty received_property = 6;
+        InvalidRepField invalid_rep_field = 7;
+        ReceivedRPC received_rpc = 8;
+        AbilityFail ability_fail = 9;
+    }
+}
+
+message BunchActorChannel {
+    bool bopen = 1;
+    bool bclose = 2;
+    bool breliable = 3;
+    bool bpartial = 4;
+    bool bpartial_initial = 5;
+    bool bpartial_final = 6;
+    string actor_name = 7;
+    int32 index = 8;
+}
+
+message ControlChannel {
+    string type = 1;
+    string messagetype = 2;
+}
+
+message MovementSrvRcvd {
+    string type = 1;
+    google.protobuf.Timestamp tsc = 2;
+    string accel = 3;
+    string velocity = 4;
+    string loc = 5;
+    string rot = 6;
+    float dt = 7;
+}
+
+message MovementInvTimestamp {
+    string type = 1;
+    google.protobuf.Timestamp tsc = 2;   // client timestamp
+    google.protobuf.Timestamp tssrv = 3; // server timestamp
+}
+
+message RPCFunctionName {
+    string type = 1;
+    string func = 2;
+}
+
+message ReceivedProperty {
+    string type = 1;
+    string obj = 2;
+    string func = 3;
+}
+
+message InvalidRepField {
+    string obj = 1;
+}
+
+message ReceivedRPC {
+    string type = 1;
+    string func = 2;
+    string obj = 3;
+    bool delayed = 4;
+    int32 parms_nbr = 5;
+    int32 parms_size = 6;
+
+    // Optional fields (populated only for specific RPCs, e.g., ServerTryActivateAbility)
+    int32 handle = 7;
+    bool input = 8;
+}
+
+message AbilityFail {
+    string type = 1;
+    string ability = 2;
+    string reason = 3;
+}
+
+message ConnectionError {
+    string type = 1;
+    int32 err = 2;
+    bool fatal = 3;
+}
